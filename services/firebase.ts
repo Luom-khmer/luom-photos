@@ -4,47 +4,35 @@ import "firebase/firestore";
 import { FIREBASE_CONFIG, isConfigValid } from "../constants";
 import { Album, Selection } from "../types";
 
-// Re-export User type to be compatible with App.tsx
+// Re-export User type
 export type User = firebase.User;
 
-// Singleton instances
-let app: firebase.app.App | undefined;
-let auth: firebase.auth.Auth | undefined;
-let db: firebase.firestore.Firestore | undefined;
-
 // --- Initialization ---
-if (isConfigValid()) {
-  try {
-    // Check if app is already initialized to avoid "App already exists" error
-    // In v8/compat, firebase.apps is an array of initialized apps
-    if (!firebase.apps.length) {
-      app = firebase.initializeApp(FIREBASE_CONFIG);
-    } else {
-      app = firebase.app();
+const initFirebase = () => {
+  if (isConfigValid()) {
+    try {
+      // Check if apps are already initialized to avoid duplicates
+      if (!firebase.apps.length) {
+        firebase.initializeApp(FIREBASE_CONFIG);
+      }
+    } catch (error) {
+      console.error("Error initializing Firebase:", error);
     }
-    
-    // Initialize services
-    if (app) {
-      auth = firebase.auth();
-      db = firebase.firestore();
-    }
-  } catch (error) {
-    console.error("Error initializing Firebase:", error);
   }
-}
+};
 
-// Helper to ensure Firebase is initialized
+// Initialize immediately
+initFirebase();
+
+// Helper to ensure initialized
 const ensureInitialized = () => {
-  if (!auth || !db) {
-    // Try to recover if globally initialized but local references are missing
-    if (firebase.apps.length) {
-       auth = firebase.auth();
-       db = firebase.firestore();
-       return { auth, db };
+  if (!firebase.apps.length) {
+    initFirebase();
+    if (!firebase.apps.length) {
+       throw new Error("Firebase chưa được khởi tạo. Vui lòng kiểm tra constants.ts và tải lại trang.");
     }
-    throw new Error("Firebase chưa được khởi tạo. Vui lòng kiểm tra constants.ts và tải lại trang.");
   }
-  return { auth, db };
+  return { auth: firebase.auth(), db: firebase.firestore() };
 };
 
 // --- Authentication ---
@@ -62,26 +50,18 @@ export const loginWithGoogle = async () => {
 };
 
 export const logoutUser = async () => {
-  // If not initialized, nothing to logout
-  if (!firebase.apps.length) return;
   const { auth } = ensureInitialized();
-  if (auth) {
-      await auth.signOut();
-  }
+  await auth.signOut();
 };
 
 export const subscribeToAuthChanges = (callback: (user: User | null) => void) => {
-  if (!firebase.apps.length) {
+  try {
+    const { auth } = ensureInitialized();
+    return auth.onAuthStateChanged(callback);
+  } catch (e) {
+    // If auth isn't ready, return null
     callback(null);
     return () => {};
-  }
-  
-  try {
-      const { auth } = ensureInitialized();
-      return auth.onAuthStateChanged(callback);
-  } catch (e) {
-      callback(null);
-      return () => {};
   }
 };
 
@@ -129,7 +109,7 @@ export const saveClientSelections = async (selections: Omit<Selection, 'id' | 's
   const batch = db.batch();
   
   selections.forEach(sel => {
-    // Create a reference with auto-generated ID
+    // Create new doc ref
     const docRef = db.collection("selections").doc();
     batch.set(docRef, {
       ...sel,
